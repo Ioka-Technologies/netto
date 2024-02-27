@@ -35,7 +35,7 @@ fn draw_stacked_bar<DB: DrawingBackend, S: Borrow<str>>(
         })
         .into_text_style(drawing_area);
     let mut acc_fraction = 0.0;
-    
+
     for BoxSpec { fraction, name, color, text_color } in stack {
         drawing_area.draw(&Rectangle::new(
             [
@@ -60,7 +60,7 @@ fn draw_stacked_bar<DB: DrawingBackend, S: Borrow<str>>(
 
         acc_fraction += fraction;
     }
-    
+
     Ok(())
 }
 
@@ -122,7 +122,7 @@ fn draw_bar0<DB: DrawingBackend>(
             })
             .into_text_style(drawing_area)
     ))?;
-    
+
     Ok(())
 }
 
@@ -138,7 +138,7 @@ fn draw_bar1<DB: DrawingBackend>(
         metrics.procfs_metrics[5] +
         metrics.procfs_metrics[6]) / metrics.num_possible_cpus as f64;
     let kernel_adjusted = kernel.max(networking);
-    
+
     let colors = [
         (palette::ORANGE_400.into(), BLACK.into()), // TX syscalls
         (palette::GREEN_800.into(), WHITE.into()),  // RX syscalls
@@ -179,7 +179,7 @@ fn draw_bar1<DB: DrawingBackend>(
         ],
         BLACK
     ))?;
-    
+
     Ok(kernel_adjusted)
 }
 
@@ -230,7 +230,7 @@ fn draw_bar2<DB: DrawingBackend>(
         .sum::<f64>() / metrics.num_possible_cpus as f64;
     let total = total_meas.max(total_calc);
     let other = total - total_calc;
-    
+
     let stack = sub_metrics
         .chain(std::iter::once(
             ("other".to_string(), other)
@@ -269,7 +269,7 @@ fn draw_bar2<DB: DrawingBackend>(
         ],
         BLACK
     ))?;
-    
+
     Ok(())
 }
 
@@ -287,10 +287,10 @@ pub fn update_plot<DB: DrawingBackend>(
             .into_text_style(drawing_area)
         ).unwrap().1
     });
-    
+
     // Clear the plot
     drawing_area.fill(&WHITE)?;
-    
+
     draw_bar0(drawing_area, metrics)?;
     let kernel_adjusted = draw_bar1(drawing_area, metrics)?;
     draw_bar2(drawing_area, metrics, kernel_adjusted)?;

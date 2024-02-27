@@ -1,41 +1,67 @@
-use std::{io::{self, BufReader, BufRead}, fs::File, ops::{Add, AddAssign}, collections::BTreeMap, iter::Sum};
+use std::{collections::BTreeMap, fs::File, io::{self, BufRead, BufReader}, iter::Sum, ops::{Add, AddAssign, Bound}};
 #[cfg(feature = "save-traces")]
 use std::io::Write;
 
 /// Helper to load and manage application-defined kernel symbols
 #[derive(Default)]
 pub struct KSyms {
-    syms: BTreeMap<u64, KSymsVal>
+    syms: BTreeMap<u64, KSymsVal>,
+    all_syms: BTreeMap<u64, String>
 }
 
-type SymbolFun = Box<dyn for<'a> Fn(&'a mut Counts, &'a mut PerFrameProps) -> Option<&'a mut u16>>;
+type SymbolFun = Box<dyn for<'a> Fn(&'a mut Counts, &'a mut PerFrameProps) -> Option<&'a mut Metric>>;
 
 struct KSymsVal {
     range_end: u64,
     fun: SymbolFun
 }
 
+#[derive(Default, Clone)]
+pub struct Metric {
+    pub count: u16,
+    pub sub_metrics: BTreeMap<String, Metric>
+}
+
+impl AddAssign for Metric {
+        fn add_assign(&mut self, rhs: Self) {
+            self.count += rhs.count;
+            for (key, value) in rhs.sub_metrics {
+                *self.sub_metrics.entry(key).or_default() += value;
+            }
+        }
+    }
+
+impl Add for Metric {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        let mut new = self;
+        new += rhs;
+        new
+    }
+}
+
 /// Counts instances of symbols in stack traces
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone)]
 pub struct Counts {
-    pub net_rx_action: u16,
-    pub __napi_poll: u16,
+    pub net_rx_action: Metric,
+    pub __napi_poll: Metric,
     /// Catch-all for any function to submit frames to the network stack
-    pub netif_receive_skb: u16,
-    pub br_handle_frame: u16,
+    pub netif_receive_skb: Metric,
+    pub br_handle_frame: Metric,
     /// netif_receive_skb when called by br_handle_frame
-    pub netif_receive_skb_sub_br: u16,
-    pub do_xdp_generic: u16,
-    pub tcf_classify: u16,
-    pub ip_forward: u16,
-    pub ip6_forward: u16,
-    pub ip_local_deliver: u16,
-    pub ip6_input: u16,
-    pub nf_netdev_ingress: u16,
-    pub nf_prerouting_v4: u16,
-    pub nf_prerouting_v6: u16,
-    pub napi_gro_receive_overhead: u16,
-    pub nf_conntrack_in: u16,
+    pub netif_receive_skb_sub_br: Metric,
+    pub do_xdp_generic: Metric,
+    pub tcf_classify: Metric,
+    pub ip_forward: Metric,
+    pub ip6_forward: Metric,
+    pub ip_local_deliver: Metric,
+    pub ip6_input: Metric,
+    pub nf_netdev_ingress: Metric,
+    pub nf_prerouting_v4: Metric,
+    pub nf_prerouting_v6: Metric,
+    pub napi_gro_receive_overhead: Metric,
+    pub nf_conntrack_in: Metric,
     // pub nf_local_in_v4: u16,
     // pub nf_local_in_v6: u16,
     // pub nf_forward_v4: u16,
@@ -43,8 +69,8 @@ pub struct Counts {
 }
 
 struct PerFrameProps {
-    in_nf_hook: u16,
-    ip_rcv_finish: u16
+    in_nf_hook: Metric,
+    ip_rcv_finish: Metric
 }
 
 impl KSyms {
@@ -52,7 +78,7 @@ impl KSyms {
     pub fn load() -> io::Result<Self> {
         let mut btree = BTreeMap::new();
         let f = BufReader::new(File::open("/proc/kallsyms")?);
-        
+
         // Load all the addresses into a BTreeMap
         for line in f.lines() {
             let line = line?;
@@ -77,18 +103,18 @@ impl KSyms {
                     )),
                     "netif_receive_skb" | "netif_receive_skb_core" | "netif_receive_skb_list_internal" | "__netif_receive_skb" => Option::<SymbolFun>::Some(Box::new(
                         |cnt, PerFrameProps { in_nf_hook, .. }| {
-                            cnt.nf_netdev_ingress = cnt.nf_netdev_ingress.max(std::mem::take(in_nf_hook));
+                            cnt.nf_netdev_ingress.count = cnt.nf_netdev_ingress.count.max(in_nf_hook.count);
                             Some(&mut cnt.netif_receive_skb)
                         }
                     )),
                     "napi_gro_receive" => Option::<SymbolFun>::Some(Box::new(
                         |cnt, PerFrameProps { in_nf_hook, .. }| {
-                            cnt.nf_netdev_ingress = cnt.nf_netdev_ingress.max(std::mem::take(in_nf_hook));
+                            cnt.nf_netdev_ingress.count = cnt.nf_netdev_ingress.count.max(in_nf_hook.count);
 
-                            if cnt.netif_receive_skb == 0 {
-                                cnt.napi_gro_receive_overhead = 1;
+                            if cnt.netif_receive_skb.count == 0 {
+                                cnt.napi_gro_receive_overhead.count = 1;
                             }
-                            
+
                             Some(&mut cnt.netif_receive_skb)
                         }
                     )),
@@ -100,32 +126,32 @@ impl KSyms {
                     )),
                     "br_handle_frame" => Option::<SymbolFun>::Some(Box::new(
                         |cnt, PerFrameProps { in_nf_hook, .. }| {
-                            *in_nf_hook = 0;
+                            in_nf_hook.count = 0;
                             cnt.netif_receive_skb_sub_br = std::mem::take(&mut cnt.netif_receive_skb);
                             Some(&mut cnt.br_handle_frame)
                         }
                     )),
                     "ip_forward" => Option::<SymbolFun>::Some(Box::new(
                         |cnt, PerFrameProps { in_nf_hook, .. }| {
-                            *in_nf_hook = 0;
+                            in_nf_hook.count = 0;
                             Some(&mut cnt.ip_forward)
                         }
                     )),
                     "ip6_forward" => Option::<SymbolFun>::Some(Box::new(
                         |cnt, PerFrameProps { in_nf_hook, .. }| {
-                            *in_nf_hook = 0;
+                            in_nf_hook.count = 0;
                             Some(&mut cnt.ip6_forward)
                         }
                     )),
                     "ip_local_deliver" => Option::<SymbolFun>::Some(Box::new(
                         |cnt, PerFrameProps { in_nf_hook, .. }| {
-                            *in_nf_hook = 0;
+                            in_nf_hook.count = 0;
                             Some(&mut cnt.ip_local_deliver)
                         }
                     )),
                     "ip6_input" => Option::<SymbolFun>::Some(Box::new(
                         |cnt, PerFrameProps { in_nf_hook, .. }| {
-                            *in_nf_hook = 0;
+                            in_nf_hook.count = 0;
                             Some(&mut cnt.ip6_input)
                         }
                     )),
@@ -134,19 +160,19 @@ impl KSyms {
                     )),
                     "ip_rcv" => Option::<SymbolFun>::Some(Box::new(
                         |cnt, PerFrameProps { in_nf_hook, ip_rcv_finish, .. }| {
-                            if *ip_rcv_finish == 0 {
-                                cnt.nf_prerouting_v4 = cnt.nf_prerouting_v4.max(*in_nf_hook);
+                            if ip_rcv_finish.count == 0 {
+                                cnt.nf_prerouting_v4.count = cnt.nf_prerouting_v4.count.max(in_nf_hook.count);
                             }
-                            *in_nf_hook = 0;
+                            in_nf_hook.count = 0;
                             None
                         }
                     )),
                     "ip6_rcv" => Option::<SymbolFun>::Some(Box::new(
                         |cnt, PerFrameProps { in_nf_hook, ip_rcv_finish, ..}| {
-                            if *ip_rcv_finish == 0 {
-                                cnt.nf_prerouting_v6 = cnt.nf_prerouting_v6.max(*in_nf_hook);
+                            if ip_rcv_finish.count == 0 {
+                                cnt.nf_prerouting_v6.count = cnt.nf_prerouting_v6.count.max(in_nf_hook.count);
                             }
-                            *in_nf_hook = 0;
+                            in_nf_hook.count = 0;
                             None
                         }
                     )),
@@ -169,7 +195,7 @@ impl KSyms {
             })
             .collect();
 
-        Ok(Self { syms })
+        Ok(Self { syms, all_syms: btree })
     }
 }
 
@@ -186,11 +212,11 @@ impl Counts {
     ) {
         #[cfg(feature = "save-traces")]
         let mut first_iter = true;
-        
+
         let mut c = Self::default();
         let mut frame_props = PerFrameProps {
-            in_nf_hook: 0,
-            ip_rcv_finish: 0
+            in_nf_hook: Metric::default(),
+            ip_rcv_finish: Metric::default()
         };
 
         for frame_idx in 0..max_frames {
@@ -211,9 +237,38 @@ impl Counts {
                 .syms
                 .range(..=ip)
                 .next_back() {
+                    // Load sub metric from next_frame_index using all_syms to lookup symbole
+                    let add_sub_metric = |next_frame_index: usize, parent_metric: &mut Metric| -> Option<String> {
+                        let next_ip = trace_ptr.add(next_frame_index).read_volatile();
+                        if next_ip == 0 {
+                            return None;
+                        }
+
+                        let cursor = ksyms.all_syms.lower_bound(Bound::Excluded(&next_ip));
+
+                        if let Some((_, name)) = cursor.peek_prev() {
+                            let mut sub_metric = Metric::default();
+                            sub_metric.count = 1;
+                            parent_metric.sub_metrics.insert(name.clone(), sub_metric);
+
+                            return Some(name.clone());
+                        }
+
+                        None
+                    };
+
                     if ip < *range_end {
                         if let Some(cnt) = fun(&mut c, &mut frame_props) {
-                            *cnt = 1;
+                            cnt.count = 1;
+                            if let Some(name) = add_sub_metric(frame_idx + 1, cnt) {
+                                let sub_metrics = cnt.sub_metrics.get_mut(&name).unwrap();
+
+                                if let Some(name) = add_sub_metric(frame_idx + 2, sub_metrics) {
+                                    let sub_metrics2 = sub_metrics.sub_metrics.get_mut(&name).unwrap();
+
+                                    let _ = add_sub_metric(frame_idx + 3,  sub_metrics2);
+                                }
+                            }
                         }
                     }
                 }
@@ -257,7 +312,7 @@ impl Add for Counts {
 
 impl AddAssign for Counts {
     fn add_assign(&mut self, rhs: Self) {
-        *self = *self + rhs;
+        *self = self.clone() + rhs;
     }
 }
 

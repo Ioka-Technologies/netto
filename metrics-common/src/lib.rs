@@ -6,7 +6,7 @@ use serde::{Serialize, Deserialize};
 
 /// Represents a single metric, possibly with
 /// a list of submetrics.
-/// 
+///
 /// A metric is indexed by its hierarchical name,
 /// for example: "RX Softirq/Bridging".
 #[derive(Serialize, Deserialize, Clone)]

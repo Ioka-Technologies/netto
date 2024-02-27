@@ -4,11 +4,56 @@ use anyhow::anyhow;
 use libbpf_rs::MapFlags;
 use powercap::{IntelRapl, PowerCap};
 use tokio::sync::mpsc::Sender;
-use crate::{ksyms::{Counts, KSyms}, common::{event_types_EVENT_MAX, self, event_types_EVENT_SOCK_SENDMSG, event_types_EVENT_NET_TX_SOFTIRQ, event_types_EVENT_NET_RX_SOFTIRQ, event_types_EVENT_SOCK_RECVMSG, event_types_EVENT_IO_WORKER}, bpf::ProgSkel};
+use crate::{ksyms::{Counts, KSyms, Metric}, common::{event_types_EVENT_MAX, self, event_types_EVENT_SOCK_SENDMSG, event_types_EVENT_NET_TX_SOFTIRQ, event_types_EVENT_NET_RX_SOFTIRQ, event_types_EVENT_SOCK_RECVMSG, event_types_EVENT_IO_WORKER}, bpf::ProgSkel};
 use libc::{mmap, PROT_READ, MAP_SHARED, sysconf, _SC_CLK_TCK};
 use super::{metrics_collector::MetricsCollector, MetricUpdate, SubmitUpdate};
 #[cfg(feature = "save-traces")]
 use std::fs::File;
+
+pub struct MetricSender {
+    /// Addr of the `MetricsCollector` actor
+    metrics_collector_addr: Addr<MetricsCollector>,
+    cpuid: usize,
+    cpu_frac: f64,
+    denominator: f64
+}
+
+impl MetricSender {
+    pub fn send_metrics(&self, prefix: String, parent_metric: &Metric, sub_value: u16) {
+        self.metrics_collector_addr.do_send(MetricUpdate {
+            clear: false,
+            name: prefix.clone(),
+            cpuid: self.cpuid,
+            cpu_frac: self.cpu_frac * (parent_metric.count - sub_value) as f64 / self.denominator
+        });
+        self.send_sub_metrics(prefix.clone(), parent_metric, sub_value);
+    }
+
+    pub fn send_sub_metrics(&self, prefix: String, parent_metric: &Metric, sub_value: u16) {
+        parent_metric.sub_metrics
+            .iter()
+            .map(|(name, sub_metric)| {
+                let formatted_name = format!("{}/{}", prefix, name);
+
+                let mut count_value = 0;
+                if sub_metric.count > sub_value {
+                    count_value = sub_metric.count - sub_value;
+                }
+
+                self.metrics_collector_addr.do_send(MetricUpdate {
+                    clear: false,
+                    name: formatted_name.clone(),
+                    cpuid: self.cpuid,
+                    cpu_frac: self.cpu_frac * count_value as f64  / self.denominator
+                });
+
+                self.send_sub_metrics(formatted_name.clone(), sub_metric, sub_value);
+
+                sub_metric.count as f64
+            })
+            .sum::<f64>();
+    }
+}
 
 /// Actor responsible for interacting with BPF via shared maps,
 /// retrieve stack traces from the ring buffer, and analyze them
@@ -31,7 +76,7 @@ pub struct TraceAnalyzer {
 
     /// Kernel symbols for processing the traces
     ksyms: KSyms,
-    
+
     /// Link to the open powercap interface for power queries
     rapl: Option<IntelRapl>,
 
@@ -42,7 +87,7 @@ pub struct TraceAnalyzer {
 
     /// Addr of the `MetricsCollector` actor
     metrics_collector_addr: Addr<MetricsCollector>,
-    
+
     /// Interface for sending unrecoverable runtime errors to the
     /// main task, triggering the program termination
     error_catcher_sender: Sender<anyhow::Error>,
@@ -67,7 +112,7 @@ pub struct TraceAnalyzer {
 
 impl TraceAnalyzer {
     /// Build a new TraceAnalyzer instance.
-    /// 
+    ///
     /// Note that the `per_cpu` map is passed by its id in order
     /// to be able to acquire it as an owned `libbpf_rs::Map` and
     /// avoid the reference to the lifetime of the main skel.
@@ -124,7 +169,14 @@ impl TraceAnalyzer {
     #[inline]
     fn run_interval(&mut self) -> anyhow::Result<()> {
         let now = Instant::now();
-        
+
+        self.metrics_collector_addr.do_send(MetricUpdate {
+            clear: true,
+            name: "".to_owned(),
+            cpuid: 0,
+            cpu_frac: 0.0
+        });
+
         // Update state
         let delta_time = {
             let dt = now.duration_since(self.prev_update_ts);
@@ -141,7 +193,7 @@ impl TraceAnalyzer {
             self.prev_total_energy = current_total_energy;
             delta_energy
         });
-        
+
         // Reset counts to zero
         for counts in &mut self.counts {
             *counts = Counts::default();
@@ -193,7 +245,7 @@ impl TraceAnalyzer {
         let stats = self.skel.maps().per_cpu()
             .lookup_percpu(&0i32.to_le_bytes(), MapFlags::empty())?
             .ok_or(anyhow!("Unexpected None returned for lookup into the \"per_cpu\" map"))?;
-        
+
         let total_cpu_frac = stats
             .iter()
             .zip(self.prev_total_times.iter_mut())
@@ -219,95 +271,102 @@ impl TraceAnalyzer {
                             event_types_EVENT_IO_WORKER      => "IO workers",
                             event_types_EVENT_NET_RX_SOFTIRQ => {
                                 // Update sub-events
-                                let denominator = counts[cpuid].net_rx_action.max(1) as f64;
-                                
-                                // Driver poll
-                                self.metrics_collector_addr.do_send(MetricUpdate {
-                                    name: "RX softirq/Driver poll",
+                                let denominator = counts[cpuid].net_rx_action.count.max(1) as f64;
+
+                                let metrics_sender = MetricSender {
+                                    metrics_collector_addr: self.metrics_collector_addr.clone(),
                                     cpuid,
-                                    cpu_frac: cpu_frac * (counts[cpuid].__napi_poll - counts[cpuid].netif_receive_skb) as f64 / denominator
-                                });
+                                    cpu_frac,
+                                    denominator
+                                };
+
+                                // Driver poll
+                                metrics_sender.send_metrics(
+                                    "RX softirq/Driver poll".to_owned(),
+                                    &counts[cpuid].__napi_poll,
+                                    counts[cpuid].netif_receive_skb.count
+                                );
 
                                 // GRO overhead
-                                self.metrics_collector_addr.do_send(MetricUpdate {
-                                    name: "RX softirq/GRO overhead",
-                                    cpuid,
-                                    cpu_frac: cpu_frac * counts[cpuid].napi_gro_receive_overhead as f64 / denominator
-                                });
+                                metrics_sender.send_metrics(
+                                    "RX softirq/GRO overhead".to_owned(),
+                                    &counts[cpuid].napi_gro_receive_overhead,
+                                    0
+                                );
 
                                 // XDP generic
-                                self.metrics_collector_addr.do_send(MetricUpdate {
-                                    name: "RX softirq/XDP generic",
-                                    cpuid,
-                                    cpu_frac: cpu_frac * counts[cpuid].do_xdp_generic as f64 / denominator
-                                });
+                                metrics_sender.send_metrics(
+                                    "RX softirq/XDP generic".to_owned(),
+                                    &counts[cpuid].do_xdp_generic,
+                                    0
+                                );
 
                                 // TC classify
-                                self.metrics_collector_addr.do_send(MetricUpdate {
-                                    name: "RX softirq/TC classify",
-                                    cpuid,
-                                    cpu_frac: cpu_frac * counts[cpuid].tcf_classify as f64 / denominator
-                                });
+                                metrics_sender.send_metrics(
+                                    "RX softirq/TC classify".to_owned(),
+                                    &counts[cpuid].tcf_classify,
+                                    0
+                                );
 
                                 // NF ingress
-                                self.metrics_collector_addr.do_send(MetricUpdate {
-                                    name: "RX softirq/NF ingress",
-                                    cpuid,
-                                    cpu_frac: cpu_frac * counts[cpuid].nf_netdev_ingress as f64 / denominator
-                                });
+                                metrics_sender.send_metrics(
+                                    "RX softirq/NF ingress".to_owned(),
+                                    &counts[cpuid].nf_netdev_ingress,
+                                    0
+                                );
 
                                 // Conntrack
-                                self.metrics_collector_addr.do_send(MetricUpdate {
-                                    name: "RX softirq/NF conntrack",
-                                    cpuid,
-                                    cpu_frac: cpu_frac * counts[cpuid].nf_conntrack_in as f64 / denominator
-                                });
+                                metrics_sender.send_metrics(
+                                    "RX softirq/NF conntrack".to_owned(),
+                                    &counts[cpuid].nf_conntrack_in,
+                                    0
+                                );
 
                                 // Bridging
-                                self.metrics_collector_addr.do_send(MetricUpdate {
-                                    name: "RX softirq/Bridging",
-                                    cpuid,
-                                    cpu_frac: cpu_frac * (counts[cpuid].br_handle_frame - counts[cpuid].netif_receive_skb_sub_br) as f64 / denominator
-                                });
+                                metrics_sender.send_metrics(
+                                    "X softirq/Bridging".to_owned(),
+                                    &counts[cpuid].br_handle_frame,
+                                    counts[cpuid].netif_receive_skb_sub_br.count
+                                );
 
                                 // NF prerouting
-                                self.metrics_collector_addr.do_send(MetricUpdate {
-                                    name: "RX softirq/NF prerouting/v4",
-                                    cpuid,
-                                    cpu_frac: cpu_frac * counts[cpuid].nf_prerouting_v4 as f64 / denominator
-                                });
+                                metrics_sender.send_metrics(
+                                    "RX softirq/NF prerouting/v4".to_owned(),
+                                    &counts[cpuid].nf_prerouting_v4,
+                                    0
+                                );
 
-                                self.metrics_collector_addr.do_send(MetricUpdate {
-                                    name: "RX softirq/NF prerouting/v6",
-                                    cpuid,
-                                    cpu_frac: cpu_frac * counts[cpuid].nf_prerouting_v6 as f64 / denominator
-                                });
+                                metrics_sender.send_metrics(
+                                    "RX softirq/NF prerouting/v6".to_owned(),
+                                    &counts[cpuid].nf_prerouting_v6,
+                                    0
+                                );
 
                                 // Forwarding
-                                self.metrics_collector_addr.do_send(MetricUpdate {
-                                    name: "RX softirq/Forwarding/v4",
-                                    cpuid,
-                                    cpu_frac: cpu_frac * counts[cpuid].ip_forward as f64 / denominator
-                                });
+                                metrics_sender.send_metrics(
+                                    "RX softirq/Forwarding/v4".to_owned(),
+                                    &counts[cpuid].ip_forward,
+                                    0
+                                );
 
-                                self.metrics_collector_addr.do_send(MetricUpdate {
-                                    name: "RX softirq/Forwarding/v6",
-                                    cpuid,
-                                    cpu_frac: cpu_frac * counts[cpuid].ip6_forward as f64 / denominator
-                                });
+                                metrics_sender.send_metrics(
+                                    "RX softirq/Forwarding/v6".to_owned(),
+                                    &counts[cpuid].ip6_forward,
+                                    0
+                                );
 
                                 // Local deliver
-                                self.metrics_collector_addr.do_send(MetricUpdate {
-                                    name: "RX softirq/Local delivery/v4",
-                                    cpuid,
-                                    cpu_frac: cpu_frac * counts[cpuid].ip_local_deliver as f64 / denominator
-                                });
+                                metrics_sender.send_metrics(
+                                    "RX softirq/Local delivery/v4".to_owned(),
+                                    &counts[cpuid].ip_local_deliver,
+                                    0
+                                );
 
-                                self.metrics_collector_addr.do_send(MetricUpdate {
-                                    name: "RX softirq/Local delivery/v6",
-                                    cpuid,
-                                    cpu_frac: cpu_frac * counts[cpuid].ip6_input as f64 / denominator
-                                });
+                                metrics_sender.send_metrics(
+                                    "RX softirq/Local delivery/v6".to_owned(),
+                                    &counts[cpuid].ip6_input,
+                                    0
+                                );
 
                                 "RX softirq"
                             },
@@ -315,7 +374,8 @@ impl TraceAnalyzer {
                         };
 
                         self.metrics_collector_addr.do_send(MetricUpdate {
-                            name: metric_name,
+                            clear: false,
+                            name: metric_name.to_owned(),
                             cpuid,
                             cpu_frac
                         });

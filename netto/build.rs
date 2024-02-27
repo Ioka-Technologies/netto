@@ -6,7 +6,7 @@ const SRC_H: &str = "src/bpf/prog.bpf.h";
 fn main() {
     let mut out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     out_dir.push("prog.bpf.rs");
-    
+
     libbpf_cargo::SkeletonBuilder::new()
         .source(SRC)
         .clang_args("-O3")
@@ -17,6 +17,7 @@ fn main() {
         .header(SRC_H)
         .allowlist_type("per_cpu_data")
         .allowlist_type("event_types")
+        .allowlist_type("sock_event_types")
         .generate()
         .unwrap()
         .write_to_file("src/common.rs")

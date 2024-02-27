@@ -37,11 +37,11 @@ struct {
  * Buffer with all the captured stack traces.
  * The buffer is logically split into two equal-sized slots,
  * that are swapped by the user-space just before each update.
- * 
+ *
  * Each element of the array encodes:
  *   - trace size in bytes (32 MSbits) | cpuid (32 LSbits) in the first u64
  *   - actual trace in the next 127 u64s
- * 
+ *
  * The array is mmapable to allow fast access from user-space
  * without the need for expensive syscalls.
  */
@@ -56,7 +56,7 @@ struct {
 /**
  * Counters of the number of traces present in each slot of
  * the `stack_traces` buffer.
- * 
+ *
  * Their increment must be atomic from the bpf side
  * as they are shared among all the cpus.
  */
@@ -64,10 +64,10 @@ u64 stack_traces_count_slot_0 = 0, stack_traces_count_slot_1 = 0;
 
 /**
  * Slot selector into the `stack_traces` map.
- * 
+ *
  * The value represents the current offset to be applied to
  * the buffer, and will therefore only ever be 0 or `stack_traces.max_entries/2`.
- * 
+ *
  * A non-zero value means select slot1, otherwise use slot0.
  */
 u32 stack_traces_slot_off = 0;
@@ -76,10 +76,10 @@ const u64 event_max = EVENT_MAX;
 
 inline void stop_event(u64 per_task_events, struct per_cpu_data* per_cpu_data, u64 now) {
     u64 t;
-    
+
     if (per_task_events < EVENT_MAX) {
         t = now - per_cpu_data->entry_ts;
-        
+
         per_cpu_data->per_event_total_time[per_task_events] += t;
         per_cpu_data->sched_switch_accounted_time += t;
     }
@@ -98,7 +98,7 @@ int BPF_PROG(sock_sendmsg_entry) {
         per_cpu_data->entry_ts = now;
         *per_task_events = EVENT_SOCK_SENDMSG;
     }
-    
+
     return 0;
 }
 
@@ -120,7 +120,7 @@ int BPF_PROG(sock_sendmsg_exit) {
         per_cpu_data->per_event_total_time[EVENT_SOCK_SENDMSG] += t;
         per_cpu_data->sched_switch_accounted_time += t;
     }
-    
+
     return 0;
 }
 
@@ -137,7 +137,7 @@ int BPF_PROG(sock_recvmsg_entry) {
         per_cpu_data->entry_ts = now;
         *per_task_events = EVENT_SOCK_RECVMSG;
     }
-    
+
     return 0;
 }
 
@@ -159,7 +159,7 @@ int BPF_PROG(sock_recvmsg_exit) {
         per_cpu_data->per_event_total_time[EVENT_SOCK_RECVMSG] += t;
         per_cpu_data->sched_switch_accounted_time += t;
     }
-    
+
     return 0;
 }
 
@@ -176,7 +176,9 @@ int BPF_PROG(net_rx_softirq_entry, unsigned int vec) {
     ) {
         stop_event(*per_task_events, per_cpu_data, now);
         per_cpu_data->entry_ts = now;
-        if (vec == NET_RX_SOFTIRQ) per_cpu_data->disable_stack_trace = 0;
+        if (vec == NET_RX_SOFTIRQ) {
+            per_cpu_data->disable_stack_trace = 0;
+        }
     }
 
     return 0;
@@ -194,7 +196,7 @@ int BPF_PROG(net_rx_softirq_exit, unsigned int vec) {
         likely((per_cpu_data = bpf_map_lookup_elem(&per_cpu, &zero)) != NULL)
     ) {
         t = now - per_cpu_data->entry_ts;
-        
+
         // Convoluted expression makes the verifier happy
         switch (vec) {
         case NET_TX_SOFTIRQ:
@@ -219,7 +221,7 @@ int BPF_PROG(tp_sched_switch, bool preempt, struct task_struct* prev, struct tas
     u32 zero = 0;
     struct per_cpu_data* per_cpu_data;
     u64* prev_task_events, * next_task_events, now = bpf_ktime_get_ns();
-    
+
     prev_task_events = bpf_task_storage_get(&traced_pids, prev, NULL, 0);
     next_task_events = bpf_task_storage_get(&traced_pids, next, NULL, 0);
     per_cpu_data     = bpf_map_lookup_elem(&per_cpu, &zero);
@@ -233,7 +235,7 @@ int BPF_PROG(tp_sched_switch, bool preempt, struct task_struct* prev, struct tas
         per_cpu_data->sched_switch_ts = now;
         per_cpu_data->sched_switch_accounted_time = 0;
     }
-    
+
     return 0;
 }
 
@@ -242,7 +244,7 @@ int perf_event_prog(struct bpf_perf_event_data* ctx) {
     struct per_cpu_data* per_cpu_data;
     u32 index, zero = 0;
     u64* buf;
-    
+
     if (
         likely((per_cpu_data = bpf_map_lookup_elem(&per_cpu, &zero)) != NULL) &&
         !per_cpu_data->disable_stack_trace
@@ -251,7 +253,7 @@ int perf_event_prog(struct bpf_perf_event_data* ctx) {
             stack_traces_slot_off ? &stack_traces_count_slot_1 : &stack_traces_count_slot_0,
             1
         ) + stack_traces_slot_off;
-        
+
         if (likely((buf = bpf_map_lookup_elem(&stack_traces, &index)) != NULL)) {
             *buf = (u64)bpf_get_smp_processor_id() |
                    ((u64)bpf_get_stack(ctx, buf+1, sizeof(u64)*127, 0) << 32);

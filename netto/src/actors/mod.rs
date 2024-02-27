@@ -9,14 +9,14 @@ use self::websocket_client::WebsocketClient;
 
 /// Signal new client connected to the `MetricsCollector` actor
 #[derive(Message)]
-#[rtype("()")]
+#[rtype(result = "()")]
 struct ClientConnected {
     addr: Addr<WebsocketClient>
 }
 
 /// Signal client disconnected to the `MetricsCollector` actor
 #[derive(Message)]
-#[rtype("()")]
+#[rtype(result = "()")]
 struct ClientDisconnected {
     addr: Addr<WebsocketClient>
 }
@@ -24,11 +24,14 @@ struct ClientDisconnected {
 /// Represents an update for a single metric on a single CPU
 /// from the `TraceAnalyzer` actor.
 #[derive(Message)]
-#[rtype("()")]
+#[rtype(result = "()")]
 struct MetricUpdate {
+    /// Whether to clear the metrics root or not
+    clear: bool,
+
     /// This is the hierarchical name of the metric.
     /// For example, "RX softirq/Bridging".
-    name: &'static str,
+    name: String,
 
     /// CPU index this metric update is for
     cpuid: usize,
@@ -40,7 +43,7 @@ struct MetricUpdate {
 /// Used to trigger the `MetricsCollector` to submit the update
 /// to all the clients.
 #[derive(Message, Clone)]
-#[rtype("()")]
+#[rtype(result = "()")]
 struct SubmitUpdate {
     /// Power drawn by the CPU in the networking stack
     /// as measured.
@@ -57,7 +60,7 @@ struct SubmitUpdate {
 /// Wrapper around a MessagePack buffer to send to websocket clients.
 /// This struct exists solely because Vec<u8> can't implement Message.
 #[derive(Message)]
-#[rtype("()")]
+#[rtype(result = "()")]
 struct EncodedUpdate {
     inner: Vec<u8>
 }

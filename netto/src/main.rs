@@ -1,3 +1,5 @@
+#![feature(btree_cursors)]
+
 mod bpf {
     include!(concat!(env!("OUT_DIR"), "/prog.bpf.rs"));
 }
@@ -53,10 +55,10 @@ struct Cli {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    
+
     System::new().block_on(async {
         let num_possible_cpus = num_possible_cpus()?;
-        
+
         // Init BPF: open the libbpf skeleton, load the progs and attach them
         let mut open_skel = bpf::ProgSkelBuilder::default().open()?;
 
@@ -105,7 +107,7 @@ fn main() -> anyhow::Result<()> {
 
                     (cpuid, attrs)
                 });
-            
+
             let mut v = Vec::with_capacity(num_possible_cpus);
             for (cpuid, mut attrs) in iter {
                 // Open the perf-event
@@ -113,14 +115,14 @@ fn main() -> anyhow::Result<()> {
                 if fd < 0 {
                     return Err(std::io::Error::last_os_error().into());
                 }
-                
+
                 // Attach to BPF prog
                 v.push(skel.progs_mut().perf_event_prog().attach_perf_event(fd)?);
             }
 
             v
         };
-        
+
         #[cfg(not(feature = "save-traces"))]
         let _sock_sendmsg_entry_link = skel.progs_mut().sock_sendmsg_entry().attach()?;
         #[cfg(not(feature = "save-traces"))]
@@ -149,7 +151,7 @@ fn main() -> anyhow::Result<()> {
             file_logger_addr,
             prometheus_logger_addr.as_ref().map(|(_, l)| l.to_owned())
         ).start();
-        
+
         let _trace_analyzer_actor_addr = TraceAnalyzer::new(
             cli.user_period,
             skel,
@@ -164,7 +166,7 @@ fn main() -> anyhow::Result<()> {
             if cli.log_file.is_none() {
                 HttpServer::new(move || {
                     let app = App::new();
-                    
+
                     if let Some((receiver, _)) = &prometheus_logger_addr {
                         app
                             .app_data(web::Data::new(receiver.clone()))

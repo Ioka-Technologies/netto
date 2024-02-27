@@ -21,6 +21,10 @@ impl Handler<MetricUpdate> for MetricsCollector {
     fn handle(&mut self, msg: MetricUpdate, _: &mut Self::Context) -> Self::Result {
         let mut target = &mut self.metrics_root;
 
+        if msg.clear {
+            target.sub_metrics.clear();
+        }
+
         for segment in msg.name.split('/') {
             let sub_metric_index = target.sub_metrics
                 .iter()
@@ -34,7 +38,7 @@ impl Handler<MetricUpdate> for MetricsCollector {
                     });
                     target.sub_metrics.len() - 1
                 });
-            
+
             target = &mut target.sub_metrics[sub_metric_index];
         }
 
@@ -56,7 +60,7 @@ impl Handler<SubmitUpdate> for MetricsCollector {
         if let Some(l) = &self.prometheus_logger {
             l.do_send(msg.clone());
         }
-        
+
         if !self.clients.is_empty() || self.file_logger.is_some() {
             let mp = MetricsWrapper::to_mp(
                 &self.metrics_root.sub_metrics,
