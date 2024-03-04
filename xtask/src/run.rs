@@ -43,7 +43,7 @@ fn build(opts: &Options) -> Result<(), anyhow::Error> {
         .status()
         .expect("failed to build web frontend");
     assert!(status.success());
-    
+
     Ok(())
 }
 

@@ -1,26 +1,32 @@
-use actix::{Actor, Handler, Addr, StreamHandler, AsyncContext};
-use actix_web::{HttpRequest, web, HttpResponse};
-use actix_web_actors::ws::{WebsocketContext, self};
-use super::{EncodedUpdate, metrics_collector::MetricsCollector, ClientConnected, ClientDisconnected};
+use super::{
+    metrics_collector::MetricsCollector, ClientConnected, ClientDisconnected, EncodedUpdate,
+};
+use actix::{Actor, Addr, AsyncContext, Handler, StreamHandler};
+use actix_web::{web, HttpRequest, HttpResponse};
+use actix_web_actors::ws::{self, WebsocketContext};
 
 #[actix_web::get("/ws/")]
 async fn ws_get(
     req: HttpRequest,
     stream: web::Payload,
-    collector: web::Data<Addr<MetricsCollector>>
+    collector: web::Data<Addr<MetricsCollector>>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    ws::start(WebsocketClient::new(collector.get_ref().clone()), &req, stream)
+    ws::start(
+        WebsocketClient::new(collector.get_ref().clone()),
+        &req,
+        stream,
+    )
 }
 
 pub struct WebsocketClient {
     /// Addr of the `MetricsCollector` actor
-    metrics_collector_addr: Addr<MetricsCollector>
+    metrics_collector_addr: Addr<MetricsCollector>,
 }
 
 impl WebsocketClient {
     pub fn new(metrics_collector_addr: Addr<MetricsCollector>) -> Self {
         Self {
-            metrics_collector_addr
+            metrics_collector_addr,
         }
     }
 }
@@ -30,13 +36,13 @@ impl Actor for WebsocketClient {
 
     fn started(&mut self, ctx: &mut Self::Context) {
         self.metrics_collector_addr.do_send(ClientConnected {
-            addr: ctx.address()
+            addr: ctx.address(),
         });
     }
 
     fn stopped(&mut self, ctx: &mut Self::Context) {
         self.metrics_collector_addr.do_send(ClientDisconnected {
-            addr: ctx.address()
+            addr: ctx.address(),
         });
     }
 }

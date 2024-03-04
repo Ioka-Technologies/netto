@@ -1,14 +1,18 @@
-use std::collections::HashSet;
-use actix::{Addr, Actor, Context, Handler};
+use super::{
+    file_logger::FileLogger, prometheus_logger::PrometheusLogger,
+    websocket_client::WebsocketClient, ClientConnected, ClientDisconnected, EncodedUpdate,
+    MetricUpdate, SubmitUpdate,
+};
+use actix::{Actor, Addr, Context, Handler};
 use metrics_common::{Metric, MetricsWrapper};
-use super::{websocket_client::WebsocketClient, MetricUpdate, SubmitUpdate, EncodedUpdate, ClientConnected, ClientDisconnected, file_logger::FileLogger, prometheus_logger::PrometheusLogger};
+use std::collections::HashSet;
 
 pub struct MetricsCollector {
     metrics_root: Metric,
     clients: HashSet<Addr<WebsocketClient>>,
     file_logger: Option<Addr<FileLogger>>,
     prometheus_logger: Option<Addr<PrometheusLogger>>,
-    num_possible_cpus: usize
+    num_possible_cpus: usize,
 }
 
 impl Actor for MetricsCollector {
@@ -27,7 +31,8 @@ impl Handler<MetricUpdate> for MetricsCollector {
         }
 
         for segment in msg.name.split('/') {
-            let sub_metric_index = target.sub_metrics
+            let sub_metric_index = target
+                .sub_metrics
                 .iter()
                 .enumerate()
                 .find_map(|(i, e)| (e.name == segment).then_some(i))
@@ -35,7 +40,7 @@ impl Handler<MetricUpdate> for MetricsCollector {
                     target.sub_metrics.push(Metric {
                         name: segment.to_string(),
                         cpu_fracs: vec![],
-                        sub_metrics: vec![]
+                        sub_metrics: vec![],
                     });
                     target.sub_metrics.len() - 1
                 });
@@ -68,7 +73,7 @@ impl Handler<SubmitUpdate> for MetricsCollector {
                 msg.net_power_w,
                 msg.user_space_overhead,
                 self.num_possible_cpus,
-                msg.procfs_metrics
+                msg.procfs_metrics,
             );
 
             for addr in &self.clients {
@@ -102,18 +107,18 @@ impl MetricsCollector {
     pub fn new(
         num_possible_cpus: usize,
         file_logger: Option<Addr<FileLogger>>,
-        prometheus_logger: Option<Addr<PrometheusLogger>>
+        prometheus_logger: Option<Addr<PrometheusLogger>>,
     ) -> Self {
         Self {
             metrics_root: Metric {
                 name: "/".to_string(),
                 cpu_fracs: vec![],
-                sub_metrics: vec![]
+                sub_metrics: vec![],
             },
             clients: HashSet::new(),
             file_logger,
             prometheus_logger,
-            num_possible_cpus
+            num_possible_cpus,
         }
     }
 }

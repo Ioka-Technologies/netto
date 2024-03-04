@@ -12,7 +12,7 @@ fn empty_cell(document: &Document, element_type: &str) -> Result<Element, JsValu
 #[inline]
 fn build_table_header(document: &Document, num_possible_cpus: usize) -> Result<Element, JsValue> {
     let row = document.create_element("tr")?;
-    
+
     let pivot = document.create_element("th")?;
     pivot.set_text_content(Some("Metrics\\CPUs"));
     pivot.set_attribute("style", "text-align: center")?;
@@ -33,7 +33,7 @@ fn build_table_header(document: &Document, num_possible_cpus: usize) -> Result<E
     cumulative.set_text_content(Some("Cumulative"));
     cumulative.set_attribute("style", "text-align: center")?;
     row.append_child(&cumulative)?;
-    
+
     Ok(row)
 }
 
@@ -44,12 +44,18 @@ fn build_empty_row(document: &Document, num_possible_cpus: usize) -> Result<Elem
     for _ in 0..num_possible_cpus + 4 {
         row.append_child(&empty_cell(document, "td")?.into())?;
     }
-    
+
     Ok(row)
 }
 
 #[inline]
-fn build_values_row(document: &Document, prefix: &str, name: &str, values: &[f64], num_possible_cpus: usize) -> Result<Element, JsValue> {
+fn build_values_row(
+    document: &Document,
+    prefix: &str,
+    name: &str,
+    values: &[f64],
+    num_possible_cpus: usize,
+) -> Result<Element, JsValue> {
     let row = document.create_element("tr")?;
 
     let name_cell = document.create_element("th")?;
@@ -90,7 +96,7 @@ fn append_metric_row(
     prefix_children: &str,
     table: &Element,
     metric: &Metric,
-    num_possible_cpus: usize
+    num_possible_cpus: usize,
 ) -> Result<(), JsValue> {
     table.append_child(
         &build_values_row(
@@ -98,15 +104,22 @@ fn append_metric_row(
             prefix,
             &metric.name,
             &metric.cpu_fracs,
-            num_possible_cpus
-        )?.into()
+            num_possible_cpus,
+        )?
+        .into(),
     )?;
 
     for (i, sub_metric) in metric.sub_metrics.iter().enumerate() {
         let (prefix, prefix_children) = if i < metric.sub_metrics.len() - 1 {
-            (prefix_children.to_string() + " \u{251c} ", prefix_children.to_string() + " \u{2502} ")
+            (
+                prefix_children.to_string() + " \u{251c} ",
+                prefix_children.to_string() + " \u{2502} ",
+            )
         } else {
-            (prefix_children.to_string() + " \u{2514} ", prefix_children.to_string() + "   ")
+            (
+                prefix_children.to_string() + " \u{2514} ",
+                prefix_children.to_string() + "   ",
+            )
         };
 
         append_metric_row(
@@ -115,7 +128,7 @@ fn append_metric_row(
             &prefix_children,
             table,
             sub_metric,
-            num_possible_cpus
+            num_possible_cpus,
         )?;
     }
 
@@ -123,52 +136,39 @@ fn append_metric_row(
 }
 
 #[inline]
-pub fn build_table(document: &Document, table: &Element, metrics: MetricsWrapper) -> Result<(), JsValue> {
-    table.append_child(&build_table_header(
-        document,
-        metrics.num_possible_cpus
-    )?.into())?;
+pub fn build_table(
+    document: &Document,
+    table: &Element,
+    metrics: MetricsWrapper,
+) -> Result<(), JsValue> {
+    table.append_child(&build_table_header(document, metrics.num_possible_cpus)?.into())?;
 
-    table.append_child(&build_empty_row(
-        document,
-        metrics.num_possible_cpus
-    )?.into())?;
+    table.append_child(&build_empty_row(document, metrics.num_possible_cpus)?.into())?;
 
     for metric in &metrics.top_level_metrics {
-        append_metric_row(
-            document,
-            "",
-            "",
-            table,
-            metric,
-            metrics.num_possible_cpus
+        append_metric_row(document, "", "", table, metric, metrics.num_possible_cpus)?;
+    }
+
+    table.append_child(&build_empty_row(document, metrics.num_possible_cpus)?.into())?;
+
+    let total_values = metrics
+        .top_level_metrics
+        .into_iter()
+        .map(|metric| metric.cpu_fracs)
+        .reduce(|acc, e| acc.iter().zip(e.iter()).map(|(a, b)| a + b).collect());
+
+    if let Some(total_values) = total_values {
+        table.append_child(
+            &build_values_row(
+                document,
+                "",
+                "TOTAL",
+                &total_values,
+                metrics.num_possible_cpus,
+            )?
+            .into(),
         )?;
     }
 
-    table.append_child(&build_empty_row(
-        document,
-        metrics.num_possible_cpus
-    )?.into())?;
-
-    let total_values = metrics.top_level_metrics
-        .into_iter()
-        .map(|metric| metric.cpu_fracs)
-        .reduce(|acc, e| {
-            acc.iter()
-                .zip(e.iter())
-                .map(|(a, b)| a + b)
-                .collect()
-        });
-    
-    if let Some(total_values) = total_values {
-        table.append_child(&build_values_row(
-            document,
-            "",
-            "TOTAL",
-            &total_values,
-            metrics.num_possible_cpus
-        )?.into())?;
-    }
-    
     Ok(())
 }

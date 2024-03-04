@@ -2,7 +2,7 @@
 //! where metrics are collected - and the client, which displays
 //! these metrics.
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Represents a single metric, possibly with
 /// a list of submetrics.
@@ -18,7 +18,7 @@ pub struct Metric {
     pub cpu_fracs: Vec<f64>,
 
     /// List of sub-metrics
-    pub sub_metrics: Vec<Metric>
+    pub sub_metrics: Vec<Metric>,
 }
 
 /// Wraps the top-level metrics with the total power
@@ -39,7 +39,7 @@ pub struct MetricsWrapper {
     pub num_possible_cpus: usize,
 
     /// Metrics acquired from /proc/stat for validation
-    pub procfs_metrics: Vec<f64>
+    pub procfs_metrics: Vec<f64>,
 }
 
 impl MetricsWrapper {
@@ -49,14 +49,14 @@ impl MetricsWrapper {
         net_power_w: Option<f64>,
         user_space_overhead: f64,
         num_possible_cpus: usize,
-        procfs_metrics: Vec<f64>
+        procfs_metrics: Vec<f64>,
     ) -> Vec<u8> {
         let wrapper = Self {
             top_level_metrics: top_level_metrics.to_vec(),
             net_power_w,
             user_space_overhead,
             num_possible_cpus,
-            procfs_metrics
+            procfs_metrics,
         };
 
         rmp_serde::to_vec(&wrapper).unwrap()

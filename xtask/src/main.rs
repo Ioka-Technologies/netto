@@ -1,7 +1,7 @@
 mod run;
 
-use std::process::exit;
 use clap::Parser;
+use std::process::exit;
 
 #[derive(Debug, Parser)]
 pub struct Options {
@@ -11,7 +11,7 @@ pub struct Options {
 
 #[derive(Debug, Parser)]
 enum Command {
-    Run(run::Options)
+    Run(run::Options),
 }
 
 fn main() {
@@ -19,7 +19,7 @@ fn main() {
 
     use Command::*;
     let ret = match opts.command {
-        Run(opts) => run::run(opts)
+        Run(opts) => run::run(opts),
     };
 
     if let Err(e) = ret {
