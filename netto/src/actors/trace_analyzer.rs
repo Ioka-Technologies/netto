@@ -282,88 +282,88 @@ impl TraceAnalyzer {
 
                                 // Driver poll
                                 metrics_sender.send_metrics(
-                                    "RX softirq/Driver poll".to_owned(),
+                                    String::from("RX softirq/Driver poll"),
                                     &counts[cpuid].__napi_poll,
                                     counts[cpuid].netif_receive_skb.count
                                 );
 
                                 // GRO overhead
                                 metrics_sender.send_metrics(
-                                    "RX softirq/GRO overhead".to_owned(),
+                                    String::from("RX softirq/GRO overhead"),
                                     &counts[cpuid].napi_gro_receive_overhead,
                                     0
                                 );
 
                                 // XDP generic
                                 metrics_sender.send_metrics(
-                                    "RX softirq/XDP generic".to_owned(),
+                                    String::from("RX softirq/XDP generic"),
                                     &counts[cpuid].do_xdp_generic,
                                     0
                                 );
 
                                 // TC classify
                                 metrics_sender.send_metrics(
-                                    "RX softirq/TC classify".to_owned(),
+                                    String::from("RX softirq/TC classify"),
                                     &counts[cpuid].tcf_classify,
                                     0
                                 );
 
                                 // NF ingress
                                 metrics_sender.send_metrics(
-                                    "RX softirq/NF ingress".to_owned(),
+                                    String::from("RX softirq/NF ingress"),
                                     &counts[cpuid].nf_netdev_ingress,
                                     0
                                 );
 
                                 // Conntrack
                                 metrics_sender.send_metrics(
-                                    "RX softirq/NF conntrack".to_owned(),
+                                    String::from("RX softirq/NF conntrack"),
                                     &counts[cpuid].nf_conntrack_in,
                                     0
                                 );
 
                                 // Bridging
                                 metrics_sender.send_metrics(
-                                    "X softirq/Bridging".to_owned(),
+                                    String::from("X softirq/Bridging"),
                                     &counts[cpuid].br_handle_frame,
                                     counts[cpuid].netif_receive_skb_sub_br.count
                                 );
 
                                 // NF prerouting
                                 metrics_sender.send_metrics(
-                                    "RX softirq/NF prerouting/v4".to_owned(),
+                                    String::from("RX softirq/NF prerouting/v4"),
                                     &counts[cpuid].nf_prerouting_v4,
                                     0
                                 );
 
                                 metrics_sender.send_metrics(
-                                    "RX softirq/NF prerouting/v6".to_owned(),
+                                    String::from("RX softirq/NF prerouting/v6"),
                                     &counts[cpuid].nf_prerouting_v6,
                                     0
                                 );
 
                                 // Forwarding
                                 metrics_sender.send_metrics(
-                                    "RX softirq/Forwarding/v4".to_owned(),
+                                    String::from("RX softirq/Forwarding/v4"),
                                     &counts[cpuid].ip_forward,
                                     0
                                 );
 
                                 metrics_sender.send_metrics(
-                                    "RX softirq/Forwarding/v6".to_owned(),
+                                    String::from("RX softirq/Forwarding/v6"),
                                     &counts[cpuid].ip6_forward,
                                     0
                                 );
 
                                 // Local deliver
                                 metrics_sender.send_metrics(
-                                    "RX softirq/Local delivery/v4".to_owned(),
+                                    String::from("RX softirq/Local delivery/v4"),
                                     &counts[cpuid].ip_local_deliver,
                                     0
                                 );
 
                                 metrics_sender.send_metrics(
-                                    "RX softirq/Local delivery/v6".to_owned(),
+                                    String::from("RX softirq/Local delivery/v6"),
                                     &counts[cpuid].ip6_input,
                                     0
                                 );

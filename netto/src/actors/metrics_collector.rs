@@ -23,6 +23,7 @@ impl Handler<MetricUpdate> for MetricsCollector {
 
         if msg.clear {
             target.sub_metrics.clear();
+            return;
         }
 
         for segment in msg.name.split('/') {
