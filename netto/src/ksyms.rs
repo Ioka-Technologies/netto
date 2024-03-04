@@ -8,6 +8,10 @@ use std::{
     ops::{Add, AddAssign, Bound},
 };
 
+use clap::Parser;
+
+use crate::Cli;
+
 /// Helper to load and manage application-defined kernel symbols
 #[derive(Default)]
 pub struct KSyms {
@@ -243,6 +247,8 @@ impl Counts {
         max_frames: usize,
         #[cfg(feature = "save-traces")] mut output: impl Write,
     ) {
+        let cli = Cli::parse();
+
         #[cfg(feature = "save-traces")]
         let mut first_iter = true;
 
@@ -289,15 +295,18 @@ impl Counts {
                     };
 
                 if ip < *range_end {
-                    if let Some(cnt) = fun(&mut c, &mut frame_props) {
-                        cnt.count = 1;
-                        if let Some(name) = add_sub_metric(frame_idx + 1, cnt) {
-                            let sub_metrics = cnt.sub_metrics.get_mut(&name).unwrap();
+                    if let Some(top_metric) = fun(&mut c, &mut frame_props) {
+                        top_metric.count = 1;
 
-                            if let Some(name) = add_sub_metric(frame_idx + 2, sub_metrics) {
-                                let sub_metrics2 = sub_metrics.sub_metrics.get_mut(&name).unwrap();
+                        let mut metric = top_metric;
 
-                                let _ = add_sub_metric(frame_idx + 3, sub_metrics2);
+                        // loop for max_levels times adding sub metrics for each iteration
+                        for offset in 1..cli.max_levels {
+                            if let Some(name) = add_sub_metric(frame_idx + offset as usize, metric)
+                            {
+                                metric = metric.sub_metrics.get_mut(&name).unwrap();
+                            } else {
+                                break;
                             }
                         }
                     }

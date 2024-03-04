@@ -7,9 +7,11 @@ use crate::{
         event_types_EVENT_SOCK_SENDMSG,
     },
     ksyms::{Counts, KSyms, Metric},
+    Cli,
 };
 use actix::{Actor, Addr, AsyncContext, Context};
 use anyhow::anyhow;
+use clap::Parser;
 use libbpf_rs::MapFlags;
 use libc::{mmap, sysconf, MAP_SHARED, PROT_READ, _SC_CLK_TCK};
 use powercap::{IntelRapl, PowerCap};
@@ -24,6 +26,7 @@ pub struct MetricSender {
     cpuid: usize,
     cpu_frac: f64,
     denominator: f64,
+    minimum_percent: u16,
 }
 
 impl MetricSender {
@@ -49,14 +52,18 @@ impl MetricSender {
                     count_value = sub_metric.count - sub_value;
                 }
 
-                self.metrics_collector_addr.do_send(MetricUpdate {
-                    clear: false,
-                    name: formatted_name.clone(),
-                    cpuid: self.cpuid,
-                    cpu_frac: self.cpu_frac * count_value as f64 / self.denominator,
-                });
+                let cpu_frace = self.cpu_frac * count_value as f64 / self.denominator;
 
-                self.send_sub_metrics(formatted_name.clone(), sub_metric, sub_value);
+                if cpu_frace * 100.0 > self.minimum_percent as f64 {
+                    self.metrics_collector_addr.do_send(MetricUpdate {
+                        clear: false,
+                        name: formatted_name.clone(),
+                        cpuid: self.cpuid,
+                        cpu_frac: cpu_frace,
+                    });
+
+                    self.send_sub_metrics(formatted_name.clone(), sub_metric, sub_value);
+                }
 
                 sub_metric.count as f64
             })
@@ -294,11 +301,14 @@ impl TraceAnalyzer {
                             // Update sub-events
                             let denominator = counts[cpuid].net_rx_action.count.max(1) as f64;
 
+                            let cli: Cli = Cli::parse();
+
                             let metrics_sender = MetricSender {
                                 metrics_collector_addr: self.metrics_collector_addr.clone(),
                                 cpuid,
                                 cpu_frac,
                                 denominator,
+                                minimum_percent: cli.soft_irq_min_percent,
                             };
 
                             // Driver poll

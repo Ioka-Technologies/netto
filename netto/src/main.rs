@@ -46,6 +46,14 @@ struct Cli {
     #[arg(short, long, default_value_t = 8080)]
     port: u16,
 
+    /// Maximum number of levels to capture in the soft irq stack traces
+    #[arg(short, long, default_value_t = 10)]
+    max_levels: u64,
+
+    /// Minimum percent usage for a soft irq stack trace to be considered and sent for collection
+    #[arg(short, long, default_value_t = 5, value_parser = clap::value_parser!(u16).range(0..100))]
+    soft_irq_min_percent: u16,
+
     /// User-space controller update period in ms
     #[arg(long, default_value_t = 500)]
     user_period: u64,
