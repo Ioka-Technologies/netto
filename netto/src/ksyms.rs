@@ -1,7 +1,7 @@
 #[cfg(feature = "save-traces")]
 use std::io::Write;
 use std::{
-    collections::BTreeMap,
+    collections::{btree_map::Cursor, BTreeMap},
     fs::File,
     io::{self, BufRead, BufReader},
     iter::Sum,
@@ -274,25 +274,21 @@ impl Counts {
             // Check for known symbols
             if let Some((_, KSymsVal { range_end, fun })) = ksyms.syms.range(..=ip).next_back() {
                 // Load sub metric from next_frame_index using all_syms to lookup symbole
-                let add_sub_metric =
-                    |next_frame_index: usize, parent_metric: &mut Metric| -> Option<String> {
-                        let next_ip = trace_ptr.add(next_frame_index).read_volatile();
-                        if next_ip == 0 {
-                            return None;
-                        }
+                let add_sub_metric = |parent_metric: &mut Metric,
+                                      cursor: &mut Cursor<u64, String>|
+                 -> Option<String> {
+                    if let Some((_, name)) = cursor.peek_prev() {
+                        let mut sub_metric = Metric::default();
+                        sub_metric.count = 1;
+                        parent_metric.sub_metrics.insert(name.clone(), sub_metric);
 
-                        let cursor = ksyms.all_syms.lower_bound(Bound::Excluded(&next_ip));
+                        cursor.next();
 
-                        if let Some((_, name)) = cursor.peek_prev() {
-                            let mut sub_metric = Metric::default();
-                            sub_metric.count = 1;
-                            parent_metric.sub_metrics.insert(name.clone(), sub_metric);
+                        return Some(name.clone());
+                    }
 
-                            return Some(name.clone());
-                        }
-
-                        None
-                    };
+                    None
+                };
 
                 if ip < *range_end {
                     if let Some(top_metric) = fun(&mut c, &mut frame_props) {
@@ -300,10 +296,13 @@ impl Counts {
 
                         let mut metric = top_metric;
 
+                        let next_ip = trace_ptr.add(frame_idx + 1).read_volatile();
+
+                        let mut cursor = ksyms.all_syms.lower_bound(Bound::Excluded(&next_ip));
+
                         // loop for max_levels times adding sub metrics for each iteration
-                        for offset in 1..cli.max_levels {
-                            if let Some(name) = add_sub_metric(frame_idx + offset as usize, metric)
-                            {
+                        for _ in 1..cli.max_levels {
+                            if let Some(name) = add_sub_metric(metric, &mut cursor) {
                                 metric = metric.sub_metrics.get_mut(&name).unwrap();
                             } else {
                                 break;
